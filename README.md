@@ -4,7 +4,7 @@ Cleaner for kov.NET (Modded LoGiC.NET)
 # Supports
 <pre>
 - Cleaning Control Flow
-- Cleaning Math
+- Cleaning Math, SizeOf & Useless Ifs
 - Fixing Strings
 </pre>
 
