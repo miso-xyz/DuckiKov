@@ -3,7 +3,8 @@ Cleaner for kov.NET (Modded LoGiC.NET)
 
 # Supports
 <pre>
-- Cleannig Control Flow
+- Cleaning Control Flow
+- Cleaning Math
 - Fixing Strings
 </pre>
 
