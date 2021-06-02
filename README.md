@@ -15,4 +15,4 @@ Cleaner for kov.NET (Modded LoGiC.NET)
 
 # Credits
 DuckIsCool - <a href="https://github.com/DuckIsCool/kov.NET">kov.NET</a></br>
-0xd4d (now wtfsck) - <a href="https://github.com/0xd4d/dnlib/"></a></br>
+0xd4d (now wtfsck) - <a href="https://github.com/0xd4d/dnlib/">dnlib</a></br>
