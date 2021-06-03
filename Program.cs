@@ -1,6 +1,7 @@
 ﻿using System;
 using System.IO;
 using System.Collections.Generic;
+using System.Security.Cryptography;
 using System.Linq;
 using System.Text;
 using dnlib.DotNet;
@@ -13,6 +14,8 @@ namespace DuckiKovDotNET
     {
         static string path;
         static ModuleDefMD asm;
+        static string enc_key;
+        static string enc_IV;
 
         static void Main(string[] args)
         {
@@ -40,6 +43,8 @@ namespace DuckiKovDotNET
             differienciateObjects();
             FixSizeOfs();
             Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine(" Cleaning up Locals...");
+            fixLocals();
             Console.WriteLine(" Cleaning up Math...");
             fixMath();
             Console.WriteLine(" Cleaning up Control Flow...");
@@ -47,6 +52,7 @@ namespace DuckiKovDotNET
             fixMath();
             removeUselessIfs();
             Console.WriteLine(" Fixing up strings...");
+            getEncryptionKeys();
             fixStrings();
             ModuleWriterOptions moduleWriterOptions = new ModuleWriterOptions(asm);
             moduleWriterOptions.MetadataOptions.Flags |= MetadataFlags.PreserveAll;
@@ -97,6 +103,73 @@ namespace DuckiKovDotNET
                     }
                 }
             }
+        }
+
+        // based on CursedLand's Local2Field Fixer (https://github.com/CursedLand/Local2Field-Fixer/)
+        static void fixLocals()
+        {
+            Dictionary<string, TypeSig> fieldList = new Dictionary<string, TypeSig>();
+            Dictionary<string, Local> fixedLocalList = new Dictionary<string, Local>();
+            TypeDef CctorType = asm.GlobalType;
+
+            foreach (TypeDef type in asm.Types)
+            {
+                foreach (FieldDef fields in type.Fields)
+                {
+                    if (!fields.IsStatic) { continue; }
+                    fieldList.Add(fields.Name, fields.FieldSig.GetFieldType());
+                }
+                foreach (MethodDef methods in type.Methods)
+                {
+                    for (int x = 0; x < methods.Body.Instructions.Count; x++)
+                    {
+                        Instruction inst = methods.Body.Instructions[x];
+                        switch (inst.OpCode.Code)
+                        {
+                            case Code.Ldsfld:
+                            case Code.Stsfld:
+                            case Code.Ldsflda:
+                                if (inst.Operand is FieldDef)
+                                {
+                                    string fieldName = ((FieldDef)inst.Operand).Name;
+                                    if (fieldList.ContainsKey(((FieldDef)inst.Operand).Name))
+                                    {
+                                        TypeSig temp_typeSig = null;
+                                        fieldList.TryGetValue(fieldName, out temp_typeSig);
+                                        Local fixedLocal = new Local(temp_typeSig, fieldName);
+                                        methods.Body.Variables.Add(fixedLocal);
+                                        CctorType.Fields.Remove((FieldDef)inst.Operand);
+                                        inst.OpCode = CallField(inst.OpCode.Code);
+                                        if (!fixedLocalList.ContainsKey(fieldName))
+                                        {
+                                            inst.Operand = fixedLocal;
+                                            fixedLocalList.Add(fieldName, fixedLocal);
+                                        }
+                                        else
+                                        {
+                                            inst.Operand = fixedLocalList[fieldName];
+                                        }
+                                    }
+                                }
+                                break;
+                        }
+                    }
+                }
+            }
+        }
+
+        static OpCode CallField(Code OpCode)
+        {
+            switch (OpCode)
+            {
+                case Code.Stsfld:
+                    return OpCodes.Stloc;
+                case Code.Ldsfld:
+                    return OpCodes.Ldloc;
+                case Code.Ldsflda:
+                    return OpCodes.Ldloca;
+            }
+            return null;
         }
 
         static void removeUselessIfs()
@@ -248,26 +321,63 @@ namespace DuckiKovDotNET
 
         public static string reverseString(string data)
         {
+            string result;
             char[] array = data.ToCharArray();
             Array.Reverse(array);
-            return new string(array);
+            result = new string(array);
+            if (enc_key != null && enc_IV != null)
+            {
+                byte[] array2 = Convert.FromBase64String(result);
+                AesCryptoServiceProvider aesCryptoServiceProvider = new AesCryptoServiceProvider();
+                aesCryptoServiceProvider.BlockSize = 0x80;
+                aesCryptoServiceProvider.KeySize = 0x100;
+                aesCryptoServiceProvider.Key = Encoding.ASCII.GetBytes("Ta284WGc29asWL2F");
+                aesCryptoServiceProvider.IV = Encoding.ASCII.GetBytes("h6iAm3fHwFdVbuIH");
+                aesCryptoServiceProvider.Padding = PaddingMode.PKCS7;
+                aesCryptoServiceProvider.Mode = CipherMode.CBC;
+                ICryptoTransform cryptoTransform = aesCryptoServiceProvider.CreateDecryptor(aesCryptoServiceProvider.Key, aesCryptoServiceProvider.IV);
+                byte[] bytes = cryptoTransform.TransformFinalBlock(array2, 0, array2.Length);
+                result = Encoding.ASCII.GetString(bytes);
+                cryptoTransform.Dispose();
+            }
+            return result;
+        }
+
+        static void getEncryptionKeys()
+        {
+            MethodDef methods = asm.GlobalType.FindMethod("StringFixer");
+            foreach (Instruction inst in methods.Body.Instructions)
+            {
+                if (inst.OpCode.Equals(OpCodes.Ldstr) && methods.Body.Instructions[methods.Body.Instructions.IndexOf(inst) + 2].OpCode.Equals(OpCodes.Callvirt))
+                {
+                    if (methods.Body.Instructions[methods.Body.Instructions.IndexOf(inst) + 2].Operand.ToString().Contains("System.Security.Cryptography.SymmetricAlgorithm::set_Key"))
+                    {
+                        enc_key = inst.Operand.ToString();
+                    }
+                    else if (methods.Body.Instructions[methods.Body.Instructions.IndexOf(inst) + 2].Operand.ToString().Contains("System.Security.Cryptography.SymmetricAlgorithm::set_IV"))
+                    {
+                        enc_IV = inst.Operand.ToString();
+                    }
+                }
+            }
         }
 
         static void differienciateObjects()
         {
-            int field_count_renamed = 0;
+            //int field_count_renamed = 0;
             foreach (TypeDef type in asm.Types)
             {
-                foreach (FieldDef fields in type.Fields)
-                {
-                    fields.Name = "duck_" + field_count_renamed++ + "_" + fields.FieldType.TypeName;
-                }
+                //foreach (FieldDef fields in type.Fields)
+                //{
+                //    fields.Name = "duck_" + field_count_renamed++ + "_" + fields.FieldType.TypeName;
+                //}
                 foreach (MethodDef methods in type.Methods)
                 {
                     if (type.IsGlobalModuleType)
                     {
-                        foreach (Instruction inst in methods.Body.Instructions)
+                        for (int x = 0; x < methods.Body.Instructions.Count; x++)
                         {
+                            Instruction inst = methods.Body.Instructions[x];
                             switch (inst.OpCode.Code)
                             {
                                 case Code.Call:
