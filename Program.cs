@@ -46,14 +46,18 @@ namespace DuckiKovDotNET
             Console.WriteLine(" Cleaning up Locals...");
             fixLocals();
             Console.WriteLine(" Cleaning up Math...");
-            fixMath();
+            fixMath(false);
             Console.WriteLine(" Cleaning up Control Flow...");
             cleanCflow();
-            fixMath();
+            fixMath(true);
             removeUselessIfs();
             Console.WriteLine(" Fixing up strings...");
             getEncryptionKeys();
             fixStrings();
+            Console.WriteLine(" Finnishing it up...");
+            removeUselessIfs();
+            fixMath(false);
+            //removeUselessMathPattern();
             ModuleWriterOptions moduleWriterOptions = new ModuleWriterOptions(asm);
             moduleWriterOptions.MetadataOptions.Flags |= MetadataFlags.PreserveAll;
             moduleWriterOptions.Logger = DummyLogger.NoThrowInstance;
@@ -93,9 +97,16 @@ namespace DuckiKovDotNET
                                 }
                                 break; 
                             case Code.Br:
-                                if (((Instruction)inst.Operand).Offset == methods.Body.Instructions[x+1].Offset)
+                                if (((Instruction)inst.Operand).Offset == methods.Body.Instructions[x + 1].Offset)
                                 {
                                     methods.Body.Instructions.RemoveAt(x);
+                                }
+                                if (x + 2 >= methods.Body.Instructions.Count) { continue; }
+                                if (((Instruction)inst.Operand).Offset == methods.Body.Instructions[x + 2].Offset && methods.Body.Instructions[x + 1].OpCode.Equals(OpCodes.Ldstr))
+                                {
+                                    methods.Body.Instructions.RemoveAt(x);
+                                    methods.Body.Instructions.RemoveAt(x);
+                                    x -= 2;
                                 }
                                 break;
                             
@@ -172,6 +183,30 @@ namespace DuckiKovDotNET
             return null;
         }
 
+        static void removeUselessMathPattern() // unused, will be used if i can figure out a way to remove the "-4 + 4 + 1 - 1 + 1 - 1" pattern
+        {
+            foreach (TypeDef type in asm.Types)
+            {
+                foreach (MethodDef methods in type.Methods)
+                {
+                    for (int x = 0; x < methods.Body.Instructions.Count; x++)
+                    {
+                        Instruction inst = methods.Body.Instructions[x];
+                        if (inst.OpCode.Equals(OpCodes.Ldc_I4))
+                        {
+                            if (methods.Body.Instructions[x + 1].Operand is Local && methods.Body.Instructions[x + 4].Operand is Local)
+                            {
+                                for (int x_ = 0; x_ < 17; x_++)
+                                {
+                                    methods.Body.Instructions.RemoveAt(x);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         static void removeUselessIfs()
         {
             foreach (TypeDef type in asm.Types)
@@ -203,7 +238,7 @@ namespace DuckiKovDotNET
             }
         }
 
-        static void fixMath()
+        static void fixMath(bool fixCalls = false)
         {
             foreach (TypeDef type in asm.Types)
             {
@@ -214,6 +249,47 @@ namespace DuckiKovDotNET
                         Instruction inst = methods.Body.Instructions[x];
                         switch (inst.OpCode.Code)
                         {
+                            case Code.Call:
+                                if (fixCalls)
+                                {
+                                    if (inst.Operand is MemberRef)
+                                    {
+                                        switch (((MemberRef)inst.Operand).Name)
+                                        {
+                                            case "Sin":
+                                                if (methods.Body.Instructions[x + 1].OpCode.Equals(OpCodes.Conv_I4))
+                                                {
+                                                    inst.OpCode = OpCodes.Ldc_I4;
+                                                    inst.Operand = Convert.ToInt32(Math.Sin(Convert.ToDouble(methods.Body.Instructions[x - 1].Operand.ToString())));
+                                                    methods.Body.Instructions.RemoveAt(x + 1);
+                                                }
+                                                else
+                                                {
+                                                    inst.OpCode = OpCodes.Ldc_R8;
+                                                    inst.Operand = Math.Sin(Convert.ToDouble(methods.Body.Instructions[x - 1].Operand.ToString()));
+                                                }
+                                                methods.Body.Instructions.RemoveAt(x - 1);
+                                                x--;
+                                                break;
+                                            case "Cos":
+                                                if (methods.Body.Instructions[x + 1].OpCode.Equals(OpCodes.Conv_I4))
+                                                {
+                                                    inst.OpCode = OpCodes.Ldc_I4;
+                                                    inst.Operand = Convert.ToInt32(Math.Cos(Convert.ToDouble(methods.Body.Instructions[x - 1].Operand.ToString())));
+                                                    methods.Body.Instructions.RemoveAt(x + 1);
+                                                }
+                                                else
+                                                {
+                                                    inst.OpCode = OpCodes.Ldc_R8;
+                                                    inst.Operand = Math.Cos(Convert.ToDouble(methods.Body.Instructions[x - 1].Operand.ToString()));
+                                                }
+                                                methods.Body.Instructions.RemoveAt(x - 1);
+                                                x--;
+                                                break;
+                                        }
+                                    }
+                                }
+                                break;
                             case Code.Add:
                             case Code.Sub:
                             case Code.Mul:
@@ -228,6 +304,7 @@ namespace DuckiKovDotNET
                                     methods.Body.Instructions.RemoveAt(x - 2);
                                     inst.OpCode = OpCodes.Ldc_I4;
                                     inst.Operand = calculated;
+                                    x -= 2;
                                 }
                                 catch { }
                                 break;
@@ -307,10 +384,13 @@ namespace DuckiKovDotNET
                         switch (inst.OpCode.Code)
                         {
                             case Code.Ldstr:
-                                if (methods.Body.Instructions[x + 1].Operand.ToString().Contains("StringFixer"))
+                                if (methods.Body.Instructions[x + 1].OpCode.Equals(OpCodes.Call))
                                 {
-                                    inst.Operand = reverseString(inst.Operand.ToString());
-                                    methods.Body.Instructions.RemoveAt(x + 1);
+                                    if (methods.Body.Instructions[x + 1].Operand.ToString().Contains("StringFixer"))
+                                    {
+                                        inst.Operand = reverseString(inst.Operand.ToString());
+                                        methods.Body.Instructions.RemoveAt(x + 1);
+                                    }
                                 }
                                 break;
                         }
@@ -327,7 +407,12 @@ namespace DuckiKovDotNET
             result = new string(array);
             if (enc_key != null && enc_IV != null)
             {
-                byte[] array2 = Convert.FromBase64String(result);
+                byte[] array2;
+                try
+                {
+                    array2 = Convert.FromBase64String(result);
+                }
+                catch { return data; }
                 AesCryptoServiceProvider aesCryptoServiceProvider = new AesCryptoServiceProvider();
                 aesCryptoServiceProvider.BlockSize = 0x80;
                 aesCryptoServiceProvider.KeySize = 0x100;
