@@ -1,7 +1,9 @@
 # DuckiKov
 Cleaner for kov.NET (Modded LoGiC.NET)
 
-Note: v1.2 has a problem where junk math is created, i currently do not know how to fix that problem
+# Notes:
+
+v1.2 has a problem where junk math is created, <b><u>i currently do not know how to fix that problem</u></b>, so if you know whats wrong just contact me
 ![JunkMath](https://i.imgur.com/OULuztQ.png)
 
 # Supports
